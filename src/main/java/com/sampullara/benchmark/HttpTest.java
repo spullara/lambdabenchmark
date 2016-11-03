@@ -1,26 +1,21 @@
 package com.sampullara.benchmark;
 
-import com.amazonaws.handlers.AsyncHandler;
-import com.amazonaws.regions.Region;
-import com.amazonaws.regions.Regions;
-import com.amazonaws.services.lambda.AWSLambdaAsyncClient;
-import com.amazonaws.services.lambda.model.InvocationType;
-import com.amazonaws.services.lambda.model.InvokeRequest;
-import com.amazonaws.services.lambda.model.InvokeResult;
-import com.amazonaws.services.lambda.model.LogType;
-import com.codahale.metrics.Counter;
-import com.codahale.metrics.Gauge;
-import com.codahale.metrics.Histogram;
-import com.codahale.metrics.MetricRegistry;
-import com.codahale.metrics.Timer;
+import com.codahale.metrics.*;
 import com.google.common.util.concurrent.RateLimiter;
 import com.wavefront.integrations.metrics.WavefrontReporter;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.concurrent.FutureCallback;
+import org.apache.http.impl.NoConnectionReuseStrategy;
+import org.apache.http.impl.nio.client.CloseableHttpAsyncClient;
+import org.apache.http.impl.nio.client.HttpAsyncClientBuilder;
 
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class App {
+public class HttpTest {
   public static void main(String[] args) {
     MetricRegistry metrics = new MetricRegistry();
     WavefrontReporter reporter = WavefrontReporter.forRegistry(metrics)
@@ -42,8 +37,12 @@ public class App {
       }
     });
 
-    AWSLambdaAsyncClient client = new AWSLambdaAsyncClient();
-    client.setRegion(Region.getRegion(Regions.US_WEST_2));
+    CloseableHttpAsyncClient client = HttpAsyncClientBuilder.create()
+            .setMaxConnPerRoute(100)
+            .setMaxConnTotal(100)
+            .setConnectionReuseStrategy(NoConnectionReuseStrategy.INSTANCE)
+            .build();
+    client.start();
 
     Timer invokeLatency = metrics.timer("lambda.invoke_latency");
     Timer waitTime = metrics.timer("lambda.wait_time");
@@ -67,14 +66,21 @@ public class App {
       semaphore.acquireUninterruptibly();
       concurrencyHistogram.update(100 - semaphore.availablePermits());
       waitTimeCtx.stop();
-      InvokeRequest request = new InvokeRequest()
-              .withFunctionName("arn:aws:lambda:us-west-2:178871584816:function:dev-lambdas-r-LambdabenchBenchmark-RH0OPE8RLAEM:benchmark")
-              .withLogType(LogType.Tail)
-              .withInvocationType(InvocationType.RequestResponse);
+      HttpGet httpGet = new HttpGet("https://us-central1-dinner-bell-4d9d1.cloudfunctions.net/http_test");
       invokes.inc();
       final Timer.Context invokeLatencyCtx = invokeLatency.time();
-      client.invokeAsync(request, new AsyncHandler<InvokeRequest, InvokeResult>() {
-        public void onError(Exception e) {
+      client.execute(httpGet, new FutureCallback<HttpResponse>() {
+        @Override
+        public void completed(HttpResponse httpResponse) {
+          invokeLatencyCtx.stop();
+          successes.inc();
+          System.out.println("SUCCESS: " + successes.getCount());
+          concurrency.decrementAndGet();
+          semaphore.release();
+        }
+
+        @Override
+        public void failed(Exception e) {
           e.printStackTrace();
           invokeLatencyCtx.stop();
           errors.inc();
@@ -83,12 +89,9 @@ public class App {
           semaphore.release();
         }
 
-        public void onSuccess(InvokeRequest request, InvokeResult invokeResult) {
-          invokeLatencyCtx.stop();
-          successes.inc();
-          System.out.println("SUCCESS: " + successes.getCount());
-          concurrency.decrementAndGet();
-          semaphore.release();
+        @Override
+        public void cancelled() {
+          failed(new CancellationException());
         }
       });
     }
