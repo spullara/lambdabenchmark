@@ -62,14 +62,16 @@ public class HttpTest {
       long minutes = (System.currentTimeMillis() - start) / 60000;
       if (minutes != epoch) {
         epoch = minutes;
-        rateLimiter = RateLimiter.create(startingRate * Math.pow(multiplier, epoch));
+        double permitsPerSecond = startingRate * Math.pow(multiplier, epoch);
+        rateLimiter = RateLimiter.create(permitsPerSecond);
+        System.out.println("PPS: " + permitsPerSecond);
       }
       Timer.Context waitTimeCtx = waitTime.time();
       rateLimiter.acquire();
       semaphore.acquireUninterruptibly();
       concurrencyHistogram.update(PERMITS - semaphore.availablePermits());
       waitTimeCtx.stop();
-      HttpGet httpGet = new HttpGet("https://demo.transposit.com/login");
+      HttpGet httpGet = new HttpGet("http://104.198.105.2/requests/helloriff");
       invokes.inc();
       final Timer.Context invokeLatencyCtx = invokeLatency.time();
       client.execute(httpGet, new FutureCallback<HttpResponse>() {
