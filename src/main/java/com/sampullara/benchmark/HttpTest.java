@@ -16,6 +16,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class HttpTest {
+
+  public static final int PERMITS = 5;
+
   public static void main(String[] args) {
     MetricRegistry metrics = new MetricRegistry();
     WavefrontReporter reporter = WavefrontReporter.forRegistry(metrics)
@@ -28,7 +31,7 @@ public class HttpTest {
     The idea is to slowly ratchet up concurrency and rate and measure latency.
      */
 
-    long startingRate = 100;
+    long startingRate = 10;
     final double multiplier = 1.2;
     metrics.counter("lambda.starting_rate").inc(startingRate);
     metrics.register("lambda.multiplier", new Gauge<Double>() {
@@ -38,8 +41,8 @@ public class HttpTest {
     });
 
     CloseableHttpAsyncClient client = HttpAsyncClientBuilder.create()
-            .setMaxConnPerRoute(100)
-            .setMaxConnTotal(100)
+            .setMaxConnPerRoute(PERMITS)
+            .setMaxConnTotal(PERMITS)
             .setConnectionReuseStrategy(NoConnectionReuseStrategy.INSTANCE)
             .build();
     client.start();
@@ -50,7 +53,7 @@ public class HttpTest {
     final Counter successes = metrics.counter("lambda.successes");
     final Counter errors = metrics.counter("lambda.errors");
     final AtomicInteger concurrency = new AtomicInteger(0);
-    final Semaphore semaphore = new Semaphore(100);
+    final Semaphore semaphore = new Semaphore(PERMITS);
     Histogram concurrencyHistogram = metrics.histogram("lambda.concurrency");
     long start = System.currentTimeMillis();
     RateLimiter rateLimiter = RateLimiter.create(startingRate);
@@ -64,9 +67,9 @@ public class HttpTest {
       Timer.Context waitTimeCtx = waitTime.time();
       rateLimiter.acquire();
       semaphore.acquireUninterruptibly();
-      concurrencyHistogram.update(100 - semaphore.availablePermits());
+      concurrencyHistogram.update(PERMITS - semaphore.availablePermits());
       waitTimeCtx.stop();
-      HttpGet httpGet = new HttpGet("https://us-central1-dinner-bell-4d9d1.cloudfunctions.net/http_test");
+      HttpGet httpGet = new HttpGet("https://demo.transposit.com/login");
       invokes.inc();
       final Timer.Context invokeLatencyCtx = invokeLatency.time();
       client.execute(httpGet, new FutureCallback<HttpResponse>() {

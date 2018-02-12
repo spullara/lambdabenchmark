@@ -21,6 +21,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class InvokeTest {
+
+  public static final int PERMITS = 5;
+
   public static void main(String[] args) {
     MetricRegistry metrics = new MetricRegistry();
     WavefrontReporter reporter = WavefrontReporter.forRegistry(metrics)
@@ -33,7 +36,7 @@ public class InvokeTest {
     The idea is to slowly ratchet up concurrency and rate and measure latency.
      */
 
-    long startingRate = 100;
+    long startingRate = 10;
     final double multiplier = 1.2;
     metrics.counter("lambda.starting_rate").inc(startingRate);
     metrics.register("lambda.multiplier", new Gauge<Double>() {
@@ -51,7 +54,7 @@ public class InvokeTest {
     final Counter successes = metrics.counter("lambda.successes");
     final Counter errors = metrics.counter("lambda.errors");
     final AtomicInteger concurrency = new AtomicInteger(0);
-    final Semaphore semaphore = new Semaphore(100);
+    final Semaphore semaphore = new Semaphore(PERMITS);
     Histogram concurrencyHistogram = metrics.histogram("lambda.concurrency");
     long start = System.currentTimeMillis();
     RateLimiter rateLimiter = RateLimiter.create(startingRate);
@@ -65,7 +68,7 @@ public class InvokeTest {
       Timer.Context waitTimeCtx = waitTime.time();
       rateLimiter.acquire();
       semaphore.acquireUninterruptibly();
-      concurrencyHistogram.update(100 - semaphore.availablePermits());
+      concurrencyHistogram.update(PERMITS - semaphore.availablePermits());
       waitTimeCtx.stop();
       InvokeRequest request = new InvokeRequest()
               .withFunctionName("arn:aws:lambda:us-west-2:178871584816:function:dev-lambdas-r-LambdabenchBenchmark-RH0OPE8RLAEM:benchmark")
